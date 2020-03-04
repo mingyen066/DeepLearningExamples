@@ -40,7 +40,7 @@ python3 /workspace/bert/data/bertPrep.py --action download --dataset google_pret
 # --max_predictions_per_seq 20 --vocab_file $BERT_PREP_WORKING_DIR/download/google_pretrained_weights/uncased_L-24_H-1024_A-16/vocab.txt --do_lower_case 1
 
 python3 /workspace/bert/data/bertPrep.py --action create_hdf5_files --dataset wikicorpus_zh --max_seq_length 128 \
- --max_predictions_per_seq 20 --vocab_file $BERT_PREP_WORKING_DIR/download/google_pretrained_weights/uncased_L-24_H-1024_A-16/vocab.txt --do_lower_case 0
+ --max_predictions_per_seq 20 --vocab_file $BERT_PREP_WORKING_DIR/download/google_pretrained_weights/chinese_L-12_H-768_A-12/vocab.txt --do_lower_case 0
 
 
 # Create HDF5 files Phase 2

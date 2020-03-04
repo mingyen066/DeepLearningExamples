@@ -1,0 +1,108 @@
+#!/bin/bash
+
+#SBATCH --exclusive
+#SBATCH --mem=0
+#SBATCH --overcommit
+
+#SBATCH -J GPU_64
+#SBATCH -o log_wiki_ltn_64GPU_results_%j.txt
+#SBATCH -N 8
+#SBATCH --ntasks-per-node=8
+#SBATCH --account=ENT108239
+#SBATCH --partition=gp2d
+#SBATCH --gres=gpu:8
+
+set -eux
+
+
+singularity_image = "pytorch_19.12_bert-py3.sif"
+
+readonly datadir="/workspace/bert/data/hdf5_lower_case_1_seq_len_128_max_pred_20_masked_lm_prob_0.15_random_seed_12345_dupe_factor_5/wikicorpus_zh"
+
+# Location of dataset for phase 2
+readonly datadir_phase2="/workspace/bert/data/hdf5_lower_case_1_seq_len_512_max_pred_80_masked_lm_prob_0.15_random_seed_12345_dupe_factor_5/wikicorpus_zh"
+# Path to where trained checkpoints will be saved on the system
+readonly checkpoint_dir="chinese_wiki_ltn_checkpoint"
+# readonly checkpointdir="~/nvidia-workspace/single_node_"
+
+# readonly mounts=".:/workspace/bert,${datadir}:/workspace/data,${datadir_phase2}:/workspace/data_phase2,${checkpointdir}:/results"
+
+srun --ntasks="${SLURM_JOB_NUM_NODES}" --ntasks-per-node=1 mkdir -p "/home/mingyen066/nvidia-workspace/${checkpoint_dir}"
+
+module purge
+module load compiler/gnu/7.3.0 openmpi3 singularity
+
+PHASE1_TRAINING_STEPS=7038
+
+PHASE1="\
+    --train_batch_size=${BATCHSIZE:-1024} \
+    --learning_rate=${LR:-6e-3} \
+    --warmup_proportion=${WARMUP_UPDATES:-0.2843} \
+    --input_dir=${datadir} \
+    --max_seq_length=128 \
+    --max_predictions_per_seq=20 \
+    --max_steps=${PHASE1_TRAINING_STEPS} \
+    --num_steps_per_checkpoint=2500 \
+    "
+# 7038
+PHASE2="\
+    --train_batch_size=${BATCHSIZE:-512} \
+    --learning_rate=${LR:-4e-3} \
+    --warmup_proportion=${WARMUP_UPDATES:-0.128} \
+    --input_dir=${datadir_phase2} \
+    --phase2 \
+    --max_seq_length=512 \
+    --max_predictions_per_seq=80 \
+    --max_steps=1563 \
+    --num_steps_per_checkpoint=1000 \
+    --resume_from_checkpoint --phase1_end_step=${PHASE1_TRAINING_STEPS} \
+    "
+
+PHASES=( "$PHASE1" "$PHASE2" ) 
+
+PHASE=${PHASE:-1}
+
+BERT_P1_CMD="\
+    python -u /workspace/bert/run_pretraining.py \
+    --seed=42 \
+    ${PHASE1} \
+    --do_train \
+    --config_file=/workspace/bert/bert_base_chinese_config.json \
+    --output_dir=/workspace/${} \
+    --fp16 \
+    --allreduce_post_accumulation --allreduce_post_accumulation_fp16 \
+    --gradient_accumulation_steps=${GRADIENT_STEPS:-8} \
+    --log_freq=1 \
+    --local_rank=\${SLURM_LOCALID}"
+
+BERT_P2_CMD="\
+    python -u /workspace/bert/run_pretraining.py \
+    --seed=42 \
+    ${PHASE2} \
+    --do_train \
+    --config_file=/workspace/bert/bert_base_chinese_config.json \
+    --output_dir=/workspace/${checkpoint_dir} \
+    --fp16 \
+    --allreduce_post_accumulation --allreduce_post_accumulation_fp16 \
+    --gradient_accumulation_steps=${GRADIENT_STEPS:-32} \
+    --log_freq=1 \
+    --local_rank=\${SLURM_LOCALID}"
+
+# BERT_CMD="\
+#     python -u /workspace/bert/run_pretraining.py \
+#     --seed=42 \
+#     ${PHASES[$((PHASE-1))]} \
+#     --do_train \
+#     --config_file=/workspace/bert/bert_base_chinese_config.json \
+#     --output_dir=/workspace/${output_dir} \
+#     --fp16 \
+#     --allreduce_post_accumulation --allreduce_post_accumulation_fp16 \
+#     --gradient_accumulation_steps=${GRADIENT_STEPS:-2} \
+#     --log_freq=1 \
+#     --local_rank=\${SLURM_LOCALID}"
+
+# srun singularity exec --nv --bind ~/nvidia-workspace:/workspace ~/nvidia-workspace/pytorch_19.12_bert-py3.sif sh -c "${BERT_CMD}"
+srun singularity exec --nv --bind ~/nvidia-workspace:/workspace ~/nvidia-workspace/${singularity_image} sh -c "${BERT_P1_CMD}"
+srun singularity exec --nv --bind ~/nvidia-workspace:/workspace ~/nvidia-workspace/${singularity_image} sh -c "${BERT_P2_CMD}"
+#srun -l --container-image="${docker_image}" --container-mounts="${mounts}" sh -c "${BERT_CMD}"
+
